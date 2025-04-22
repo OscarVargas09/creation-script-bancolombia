@@ -8,6 +8,31 @@ A continuación se presentan 5 enunciados de consultas basados en las coleccione
 
 **Consulta MongoDB:**
 ```javascript
+db.clientes.aggregate([
+  { $unwind: "$cuentas" }, 
+  {
+    $group: {
+      _id: "$cuentas.tipo_cuenta", 
+      saldo_total: { $sum: "$cuentas.saldo" },
+      saldo_promedio: { $avg: "$cuentas.saldo" },
+      saldo_maximo: { $max: "$cuentas.saldo" },
+      saldo_minimo: { $min: "$cuentas.saldo" },
+      cantidad_cuentas: { $sum: 1 }
+    }
+  },
+  {
+    $project: {
+      _id: 0,
+      tipo_cuenta: "$_id",
+      saldo_total: { $round: ["$saldo_total", 2] },
+      saldo_promedio: { $round: ["$saldo_promedio", 2] },
+      saldo_maximo: 1,
+      saldo_minimo: 1,
+      cantidad_cuentas: 1
+    }
+  },
+  { $sort: { saldo_total: -1 } }
+])
 ```
 
 ## 2. Patrones de Transacciones por Cliente
@@ -16,6 +41,45 @@ A continuación se presentan 5 enunciados de consultas basados en las coleccione
 
 **Consulta MongoDB:**
 ```javascript
+db.transacciones.aggregate([
+  {
+    $group: {
+      _id: {
+        cliente_ref: "$cliente_ref",
+        tipo: "$tipo_transaccion"
+      },
+      cantidad: { $sum: 1 },
+      monto_total: { $sum: "$monto" }
+    }
+  },
+  {
+    $lookup: {
+      from: "clientes",
+      localField: "_id.cliente_ref",
+      foreignField: "_id",
+      as: "cliente"
+    }
+  },
+  {
+    $unwind: "$cliente"
+  },
+  {
+    $project: {
+      _id: 0,
+      nombre_cliente: "$cliente.nombre",
+      cedula: "$cliente.cedula",
+      tipo_transaccion: "$_id.tipo",
+      cantidad_transacciones: "$cantidad",
+      monto_total: 1
+    }
+  },
+  {
+    $sort: {
+      nombre_cliente: 1,
+      tipo_transaccion: 1
+    }
+  }
+])
 ```
 
 ## 3. Clientes con Múltiples Tarjetas de Crédito
@@ -24,6 +88,47 @@ A continuación se presentan 5 enunciados de consultas basados en las coleccione
 
 **Consulta MongoDB:**
 ```javascript
+db.clientes.aggregate([
+  { $unwind: "$cuentas" },
+  { $unwind: "$cuentas.tarjetas" },
+  { 
+    $match: { 
+      "cuentas.tarjetas.tipo_tarjeta": "credito" 
+    } 
+  },
+  {
+    $group: {
+      _id: "$_id",
+      nombre: { $first: "$nombre" },
+      cedula: { $first: "$cedula" },
+      correo: { $first: "$correo" },
+      cantidad_tarjetas: { $sum: 1 },
+      tarjetas: { 
+        $push: {
+          numero: "$cuentas.tarjetas.numero_tarjeta",
+          fecha_expiracion: "$cuentas.tarjetas.fecha_expiracion",
+          cuenta_asociada: "$cuentas.num_cuenta"
+        }
+      }
+    }
+  },
+  { 
+    $match: { 
+      cantidad_tarjetas: { $gt: 1 } 
+    } 
+  },
+  {
+    $project: {
+      _id: 0,
+      nombre: 1,
+      cedula: 1,
+      correo: 1,
+      cantidad_tarjetas: 1,
+      tarjetas: 1
+    }
+  },
+  { $sort: { cantidad_tarjetas: -1 } }
+])
 ```
 
 ## 4. Análisis de Medios de Pago más Utilizados
@@ -32,6 +137,47 @@ A continuación se presentan 5 enunciados de consultas basados en las coleccione
 
 **Consulta MongoDB:**
 ```javascript
+db.transacciones.aggregate([
+  {
+    $match: {
+      tipo_transaccion: "deposito"
+    }
+  },
+  {
+    $addFields: {
+      mes: { $month: "$fecha" },
+      año: { $year: "$fecha" }
+    }
+  },
+  {
+    $group: {
+      _id: {
+        medio_pago: "$detalles_deposito.medio_pago",
+        mes: "$mes",
+        año: "$año"
+      },
+      cantidad: { $sum: 1 },
+      monto_total: { $sum: "$monto" }
+    }
+  },
+  {
+    $sort: {
+      "_id.año": 1,
+      "_id.mes": 1,
+      "cantidad": -1
+    }
+  },
+  {
+    $project: {
+      _id: 0,
+      medio_pago: "$_id.medio_pago",
+      mes: "$_id.mes",
+      año: "$_id.año",
+      cantidad_depositos: "$cantidad",
+      monto_total_depositado: "$monto_total"
+    }
+  }
+])
 ```
 
 ## 5. Detección de Cuentas con Transacciones Sospechosas
@@ -40,4 +186,19 @@ A continuación se presentan 5 enunciados de consultas basados en las coleccione
 
 **Consulta MongoDB:**
 ```javascript
+db.transacciones.aggregate([
+  { $match: { tipo_transaccion: "retiro" } },
+  {
+    $group: {
+      _id: {
+        num_cuenta: "$num_cuenta",
+        dia: { $dateToString: { format: "%Y-%m-%d", date: "$fecha" } }
+      },
+      cantidad: { $sum: 1 },
+      total: { $sum: "$monto" }
+    }
+  },
+  { $match: { cantidad: { $gt: 3 }, total: { $gt: 1000000 } } },
+  { $sort: { total: -1 } }
+])
 ```
